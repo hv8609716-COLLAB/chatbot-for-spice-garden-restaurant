@@ -1,5 +1,5 @@
 import os
-import gradio as gr
+import streamlit as st
 from huggingface_hub import InferenceClient
 
 # ============================================================
@@ -28,41 +28,68 @@ Your job:
 - Keep responses concise and natural, avoid sounding robotic
 """
 
-DEFAULT_MODEL = "Qwen 2.5 7B (Fast)"
+DEFAULT_MODEL = "Llama 3.1 8B (Smart)"
 SHOW_MODEL_SWITCH = False
 
-PRIMARY_COLOR = "orange"
+PRIMARY_COLOR = "#FF7A18"   # orange, used for accents in the CSS below
 
 # ============================================================
 # ⚙️ CORE ENGINE — no need to touch below this line
 # ============================================================
 
-HF_TOKEN = os.environ.get("HF_TOKEN")
+HF_TOKEN = st.secrets.get("HF_TOKEN", os.environ.get("HF_TOKEN"))
 
 MODELS = {
     "Qwen 2.5 7B (Fast)": "Qwen/Qwen2.5-7B-Instruct",
     "Llama 3.1 8B (Smart)": "meta-llama/Llama-3.1-8B-Instruct",
 }
 
+st.set_page_config(page_title=BOT_NAME, page_icon="🍽️", layout="centered")
 
-def chat(message, history, model_choice):
+# ---------- Light theming via CSS ----------
+st.markdown(
+    f"""
+    <style>
+    .main {{
+        background: linear-gradient(135deg, #1e1b2e 0%, #2d2640 100%);
+    }}
+    #MainMenu, footer {{visibility: hidden;}}
+    .bot-title {{
+        text-align: center;
+    }}
+    .bot-title h1 {{
+        margin-bottom: 0;
+    }}
+    .bot-title p {{
+        color: gray;
+    }}
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
+
+@st.cache_resource
+def get_client(model_id):
+    return InferenceClient(model=model_id, token=HF_TOKEN)
+
+
+# ---------- Session state ----------
+if "messages" not in st.session_state:
+    st.session_state.messages = []  # list of {"role": ..., "content": ...}
+if "model_choice" not in st.session_state:
+    st.session_state.model_choice = DEFAULT_MODEL
+
+
+def stream_chat(message, history, model_choice):
     model_name = model_choice if SHOW_MODEL_SWITCH else DEFAULT_MODEL
-    client = InferenceClient(model=MODELS[model_name], token=HF_TOKEN)
+    client = get_client(MODELS[model_name])
 
     messages = [{"role": "system", "content": SYSTEM_PROMPT}]
-
     for item in history:
-        if isinstance(item, dict):
-            messages.append({"role": item["role"], "content": item["content"]})
-        else:
-            user_msg, bot_msg = item
-            messages.append({"role": "user", "content": user_msg})
-            if bot_msg:
-                messages.append({"role": "assistant", "content": bot_msg})
-
+        messages.append({"role": item["role"], "content": item["content"]})
     messages.append({"role": "user", "content": message})
 
-    response = ""
     try:
         stream = client.chat_completion(
             messages=messages,
@@ -71,6 +98,7 @@ def chat(message, history, model_choice):
             top_p=0.9,
             stream=True,
         )
+        response = ""
         for chunk in stream:
             if chunk.choices and len(chunk.choices) > 0:
                 token = chunk.choices[0].delta.content
@@ -81,46 +109,54 @@ def chat(message, history, model_choice):
         if not response:
             yield "⚠️ The assistant didn't return a response. Please try again."
 
-    except Exception as e:
-        yield f"⚠️ Something went wrong. Please try again in a moment."
+    except Exception:
+        yield "⚠️ Something went wrong. Please try again in a moment."
 
 
-custom_css = """
-#component-0 { max-width: 900px; margin: auto; }
-.gradio-container { background: linear-gradient(135deg, #1e1b2e 0%, #2d2640 100%); }
-footer { visibility: hidden; }
-"""
+# ---------- UI ----------
+st.markdown(
+    f"""
+    <div class="bot-title">
+    <h1>🍽️ {BOT_NAME}</h1>
+    <p>{BOT_TAGLINE}</p>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
 
-with gr.Blocks(title=BOT_NAME) as demo:
-
-    gr.Markdown(
-        f"""
-        <div style="text-align:center;">
-        <h1>🍽️ {BOT_NAME}</h1>
-        <p style="color:gray;">{BOT_TAGLINE}</p>
-        </div>
-        """
+if SHOW_MODEL_SWITCH:
+    st.session_state.model_choice = st.selectbox(
+        "Model", list(MODELS.keys()), index=list(MODELS.keys()).index(st.session_state.model_choice)
     )
 
-    model_choice = gr.State(DEFAULT_MODEL)
+# Display existing chat history
+for msg in st.session_state.messages:
+    avatar = "🍽️" if msg["role"] == "assistant" else None
+    with st.chat_message(msg["role"], avatar=avatar):
+        st.markdown(msg["content"])
 
-    gr.ChatInterface(
-        fn=chat,
-        additional_inputs=[model_choice],
-        chatbot=gr.Chatbot(
-            height=520,
-            label="Conversation",
-            avatar_images=(None, "https://em-content.zobj.net/source/microsoft-teams/363/robot_1f916.png"),
-        ),
-        title=None,
-    )
+# Chat input
+user_message = st.chat_input("Ask about the menu, timings, or booking...")
 
-    gr.Markdown(
-        f"""
-        <p style="text-align:center; color:gray; font-size:12px; margin-top:20px;">
-        Demo built by Harsh · Custom AI Chatbots for Businesses 🚀
-        </p>
-        """
-    )
+if user_message:
+    st.session_state.messages.append({"role": "user", "content": user_message})
+    with st.chat_message("user"):
+        st.markdown(user_message)
 
-demo.launch(theme=gr.themes.Soft(primary_hue=PRIMARY_COLOR), css=custom_css)  
+    with st.chat_message("assistant", avatar="🍽️"):
+        placeholder = st.empty()
+        full_response = ""
+        for partial in stream_chat(user_message, st.session_state.messages[:-1], st.session_state.model_choice):
+            full_response = partial
+            placeholder.markdown(full_response)
+
+    st.session_state.messages.append({"role": "assistant", "content": full_response})
+
+st.markdown(
+    """
+    <p style="text-align:center; color:gray; font-size:12px; margin-top:20px;">
+    Demo built by Harsh · Custom AI Chatbots for Businesses 🚀
+    </p>
+    """,
+    unsafe_allow_html=True,
+)
