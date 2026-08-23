@@ -1,6 +1,6 @@
 import os
 import streamlit as st
-from huggingface_hub import InferenceClient
+from groq import Groq
 
 # ============================================================
 # 🔧 CUSTOMIZE THIS SECTION FOR EACH CLIENT — nothing else needs to change
@@ -28,7 +28,7 @@ Your job:
 - Keep responses concise and natural, avoid sounding robotic
 """
 
-DEFAULT_MODEL = "Llama 3.1 8B (Smart)"
+DEFAULT_MODEL = "openai/gpt-oss-120b"
 SHOW_MODEL_SWITCH = False
 
 PRIMARY_COLOR = "#FF7A18"   # orange, used for accents in the CSS below
@@ -37,11 +37,11 @@ PRIMARY_COLOR = "#FF7A18"   # orange, used for accents in the CSS below
 # ⚙️ CORE ENGINE — no need to touch below this line
 # ============================================================
 
-HF_TOKEN = st.secrets.get("HF_TOKEN", os.environ.get("HF_TOKEN"))
+GROQ_API_KEY = st.secrets.get("GROQ_API_KEY", os.environ.get("GROQ_API_KEY"))
 
+# 👉 Agar model switch dikhana hai to yaha aur model names add kar sakta hai
 MODELS = {
-    "Qwen 2.5 7B (Fast)": "Qwen/Qwen2.5-7B-Instruct",
-    "Llama 3.1 8B (Smart)": "meta-llama/Llama-3.1-8B-Instruct",
+    "your-model-name-here": "your-model-name-here",
 }
 
 st.set_page_config(page_title=BOT_NAME, page_icon="🍽️", layout="centered")
@@ -70,8 +70,8 @@ st.markdown(
 
 
 @st.cache_resource
-def get_client(model_id):
-    return InferenceClient(model=model_id, token=HF_TOKEN)
+def get_client():
+    return Groq(api_key=GROQ_API_KEY)
 
 
 # ---------- Session state ----------
@@ -83,7 +83,7 @@ if "model_choice" not in st.session_state:
 
 def stream_chat(message, history, model_choice):
     model_name = model_choice if SHOW_MODEL_SWITCH else DEFAULT_MODEL
-    client = get_client(MODELS[model_name])
+    client = get_client()
 
     messages = [{"role": "system", "content": SYSTEM_PROMPT}]
     for item in history:
@@ -91,7 +91,8 @@ def stream_chat(message, history, model_choice):
     messages.append({"role": "user", "content": message})
 
     try:
-        stream = client.chat_completion(
+        stream = client.chat.completions.create(
+            model=MODELS.get(model_name, model_name),
             messages=messages,
             max_tokens=512,
             temperature=0.4,
